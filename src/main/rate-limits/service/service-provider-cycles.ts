@@ -81,7 +81,8 @@ export abstract class RateLimitServiceProviderCycles extends RateLimitServiceFul
     signal: AbortSignal,
     options?: { force?: boolean }
   ): Promise<void> {
-    if (signal.aborted) {
+    if (signal.aborted || !this.isProviderAllowed('claude')) {
+      this.updateState(this.state)
       return
     }
     // Why: skip automated Claude fetches while a Retry-After window is open or a live session feed is fresher than the OAuth poll would be.
@@ -91,7 +92,7 @@ export abstract class RateLimitServiceProviderCycles extends RateLimitServiceFul
     const claudeTarget = this.claudeFetchTarget
     // Why: capture before the resolver await so an account switch during it invalidates both the snapshot and the state apply.
     const claudeGeneration = this.claudeFetchGeneration
-    const claudeAuthPreparation = await this.claudeAuthPreparationResolver?.(claudeTarget)
+    const claudeAuthPreparation = await this.resolveClaudeAuthForUsage(claudeTarget)
     if (signal.aborted) {
       return
     }
@@ -123,7 +124,7 @@ export abstract class RateLimitServiceProviderCycles extends RateLimitServiceFul
       return
     }
 
-    const latestClaudeAuthPreparation = await this.claudeAuthPreparationResolver?.(claudeTarget)
+    const latestClaudeAuthPreparation = await this.resolveClaudeAuthForUsage(claudeTarget)
     if (signal.aborted) {
       return
     }
@@ -145,7 +146,7 @@ export abstract class RateLimitServiceProviderCycles extends RateLimitServiceFul
   }
 
   protected async runFetchGrokOnlyCycle(signal: AbortSignal): Promise<void> {
-    if (signal.aborted) {
+    if (signal.aborted || !this.isProviderAllowed('grok')) {
       return
     }
     const previousState = this.state
