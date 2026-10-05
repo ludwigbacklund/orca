@@ -93,7 +93,7 @@ export abstract class RateLimitServiceProviderCycles extends RateLimitServiceFul
     // Why: capture before the resolver await so an account switch during it invalidates both the snapshot and the state apply.
     const claudeGeneration = this.claudeFetchGeneration
     const claudeAuthPreparation = await this.resolveClaudeAuthForUsage(claudeTarget, signal)
-    if (signal.aborted) {
+    if (!this.canFetchProvider('claude', signal, claudeTarget)) {
       return
     }
     this.rememberClaudeAuthSnapshot(claudeAuthPreparation, claudeGeneration, claudeTarget)

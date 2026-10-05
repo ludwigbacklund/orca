@@ -176,7 +176,7 @@ export abstract class RateLimitServiceFullCyclePreparation extends RateLimitServ
     // (on its worker thread) are both async and must not delay other providers.
     const cursorResultPromise = this.fetchAllowedProvider('cursor', signal, () =>
       readCursorAuthSession().then((authReadResult) => {
-        if (signal.aborted) {
+        if (!this.canFetchProvider('cursor', signal)) {
           return discoveryDisabledSnapshot('cursor')
         }
         this.cursorAuthConfigured = authReadResult.status === 'ok'

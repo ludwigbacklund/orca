@@ -254,24 +254,65 @@ describe('account discovery opt-out', () => {
     }
   )
 
-  it('does not start the Cursor fetch when disabled during its keychain read', async () => {
-    const service = new RateLimitService()
-    let automaticallyDetect = true
-    service.setAccountDiscoveryPolicyResolver(() => ({
-      automaticallyDetect,
-      isConnected: () => false
-    }))
-    const pending = deferred<Awaited<ReturnType<typeof readCursorAuthSession>>>()
-    vi.mocked(readCursorAuthSession).mockReturnValueOnce(pending.promise)
-    const refresh = service.refresh()
-    await flushMicrotasks()
-    automaticallyDetect = false
-    service.accountDiscoveryPolicyChanged()
-    pending.resolve({ status: 'missing' })
-    await refresh
-    expect(fetchCursorRateLimits).not.toHaveBeenCalled()
-    expect(service.getState().cursorAuthConfigured).toBe(false)
-  })
+  it.each(['full', 'direct'] as const)(
+    'rechecks Claude eligibility after auth resolves in a %s cycle',
+    async (cycle) => {
+      const service = new RateLimitService()
+      let automaticallyDetect = true
+      service.setAccountDiscoveryPolicyResolver(() => ({
+        automaticallyDetect,
+        isConnected: (provider) => provider === 'codex'
+      }))
+      const pending = deferred<ClaudeRuntimeAuthPreparation>()
+      service.setClaudeAuthPreparationResolver(() => pending.promise)
+      const refresh =
+        cycle === 'full'
+          ? service.refresh()
+          : service.refreshClaudeForTarget({ runtime: 'wsl', wslDistro: 'Ubuntu' })
+      await flushMicrotasks()
+      automaticallyDetect = false
+      pending.resolve({
+        configDir: '/managed/claude',
+        envPatch: {},
+        stripAuthEnv: false,
+        provenance: 'managed'
+      })
+      await refresh
+      expect(fetchClaudeRateLimits).not.toHaveBeenCalled()
+      if (cycle === 'full') {
+        expect(fetchCodexRateLimits).toHaveBeenCalledOnce()
+        expect(service.getState().codex?.status).toBe('ok')
+      }
+    }
+  )
+
+  it.each(['policy-only', 'abort', 'abort-and-re-enable'] as const)(
+    'does not start the Cursor fetch when disabled during its keychain read (%s)',
+    async (change) => {
+      const service = new RateLimitService()
+      let automaticallyDetect = true
+      service.setAccountDiscoveryPolicyResolver(() => ({
+        automaticallyDetect,
+        isConnected: () => false
+      }))
+      const pending = deferred<Awaited<ReturnType<typeof readCursorAuthSession>>>()
+      vi.mocked(readCursorAuthSession).mockReturnValueOnce(pending.promise)
+      const refresh = service.refresh()
+      await flushMicrotasks()
+      automaticallyDetect = false
+      if (change !== 'policy-only') {
+        service.accountDiscoveryPolicyChanged()
+      }
+      if (change === 'abort-and-re-enable') {
+        automaticallyDetect = true
+        service.accountDiscoveryPolicyChanged()
+      }
+      pending.resolve({ status: 'missing' })
+      await refresh
+      expect(fetchCursorRateLimits).not.toHaveBeenCalled()
+      expect(service.getState().cursorAuthConfigured).toBe(false)
+    }
+  )
 
   it.each(['policy-only', 'abort', 'abort-and-re-enable'] as const)(
     'does not read Kimi credentials after a pending WSL home resolves (%s)',
