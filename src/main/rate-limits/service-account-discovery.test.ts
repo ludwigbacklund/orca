@@ -19,6 +19,7 @@ import {
   resetRateLimitProviderMocks
 } from './rate-limit-service-test-harness'
 import type { ProviderRateLimits } from '../../shared/rate-limit-types'
+import type { ClaudeRuntimeAuthPreparation } from './service/service-types'
 
 vi.mock('./claude-fetcher', () => ({
   fetchClaudeRateLimits: vi.fn(),
@@ -58,6 +59,31 @@ beforeEach(() => {
 })
 
 describe('account discovery opt-out', () => {
+  it('rejects an aborted cycle even while discovery is enabled', async () => {
+    class AdmissionService extends RateLimitService {
+      fetchGemini(signal: AbortSignal, fetch: () => Promise<ProviderRateLimits>) {
+        return this.fetchAllowedProvider('gemini', signal, fetch)
+      }
+
+      resolveClaude(signal: AbortSignal) {
+        return this.resolveClaudeAuthForUsage({ runtime: 'host' }, signal)
+      }
+    }
+    const service = new AdmissionService()
+    const auth = vi.fn()
+    const fetch = vi.fn(async () => okProvider('gemini', 10))
+    service.setClaudeAuthPreparationResolver(auth)
+    const controller = new AbortController()
+    controller.abort()
+    expect(await service.fetchGemini(controller.signal, fetch)).toMatchObject({
+      provider: 'gemini',
+      status: 'unavailable'
+    })
+    expect(service.resolveClaude(controller.signal)).toBeUndefined()
+    expect(fetch).not.toHaveBeenCalled()
+    expect(auth).not.toHaveBeenCalled()
+  })
+
   it('never probes ambient credentials or usage, including direct host and WSL refreshes', async () => {
     const service = disabledService()
     const claudeAuth = vi.fn()
@@ -193,6 +219,40 @@ describe('account discovery opt-out', () => {
     await service.refresh()
     expect(service.getState().claude?.session?.usedPercent).toBe(10)
   })
+
+  it.each(['full', 'direct'] as const)(
+    'does not revive an aborted %s cycle after Claude auth resolves',
+    async (cycle) => {
+      const service = new RateLimitService()
+      let automaticallyDetect = true
+      service.setAccountDiscoveryPolicyResolver(() => ({
+        automaticallyDetect,
+        isConnected: () => false
+      }))
+      const pending = deferred<ClaudeRuntimeAuthPreparation>()
+      const auth = vi.fn(() => pending.promise)
+      service.setClaudeAuthPreparationResolver(auth)
+      const refresh =
+        cycle === 'full'
+          ? service.refresh()
+          : service.refreshClaudeForTarget({ runtime: 'wsl', wslDistro: 'Ubuntu' })
+      await flushMicrotasks()
+      expect(auth).toHaveBeenCalledOnce()
+      automaticallyDetect = false
+      service.accountDiscoveryPolicyChanged()
+      automaticallyDetect = true
+      service.accountDiscoveryPolicyChanged()
+      pending.resolve({
+        configDir: '/managed/claude',
+        envPatch: {},
+        stripAuthEnv: false,
+        provenance: 'managed'
+      })
+      await refresh
+      expect(fetchClaudeRateLimits).not.toHaveBeenCalled()
+      expect(fetchCodexRateLimits).not.toHaveBeenCalled()
+    }
+  )
 
   it('does not start the Cursor fetch when disabled during its keychain read', async () => {
     const service = new RateLimitService()

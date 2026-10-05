@@ -66,7 +66,7 @@ export abstract class RateLimitServiceFullCyclePreparation extends RateLimitServ
     const claudeTarget = this.claudeFetchTarget
     // Why: capture before the resolver await so an account switch during it invalidates both the snapshot and the state apply.
     const claudeGeneration = this.claudeFetchGeneration
-    const claudeAuthPreparation = await this.resolveClaudeAuthForUsage(claudeTarget)
+    const claudeAuthPreparation = await this.resolveClaudeAuthForUsage(claudeTarget, signal)
     if (signal.aborted) {
       return null
     }
@@ -174,7 +174,7 @@ export abstract class RateLimitServiceFullCyclePreparation extends RateLimitServ
 
     // Why its own promise: the keychain read and the desktop state.vscdb read
     // (on its worker thread) are both async and must not delay other providers.
-    const cursorResultPromise = this.fetchAllowedProvider('cursor', () =>
+    const cursorResultPromise = this.fetchAllowedProvider('cursor', signal, () =>
       readCursorAuthSession().then((authReadResult) => {
         if (signal.aborted) {
           return discoveryDisabledSnapshot('cursor')
@@ -187,7 +187,7 @@ export abstract class RateLimitServiceFullCyclePreparation extends RateLimitServ
       (reason) => ({ status: 'rejected', reason }) as const
     )
 
-    const zcodeResultPromise = this.fetchAllowedProvider('zcode', () =>
+    const zcodeResultPromise = this.fetchAllowedProvider('zcode', signal, () =>
       zcodePlanConfigResult.error
         ? Promise.resolve(this.getZcodePlanCredentialError(zcodePlanConfigResult.error))
         : fetchZcodeRateLimits({ signal, planCredential: zcodePlanCredential })
@@ -197,7 +197,7 @@ export abstract class RateLimitServiceFullCyclePreparation extends RateLimitServ
     )
 
     // Hidden meters avoid the CLI spawn; the separate promise keeps other providers responsive.
-    const antigravityResultPromise = this.fetchAllowedProvider('antigravity', () =>
+    const antigravityResultPromise = this.fetchAllowedProvider('antigravity', signal, () =>
       antigravityUsageEnabled
         ? fetchAntigravityRateLimits({ signal })
         : Promise.resolve(previousState.antigravity ?? antigravityUsageDisabledSnapshot())
@@ -208,7 +208,7 @@ export abstract class RateLimitServiceFullCyclePreparation extends RateLimitServ
 
     const missingWslCodexHome =
       codexFetchGated || codexHomePath ? null : this.getMissingWslCodexHomeResult(codexTarget)
-    const grokResultPromise = this.fetchAllowedProvider('grok', () =>
+    const grokResultPromise = this.fetchAllowedProvider('grok', signal, () =>
       fetchGrokRateLimits({
         signal,
         authReadResult: grokAuthReadResult
@@ -220,7 +220,7 @@ export abstract class RateLimitServiceFullCyclePreparation extends RateLimitServ
 
     // Why: skip automated Claude fetches while a Retry-After window is open or a live session feed is fresher than the OAuth poll would be.
     const claudeFetchGated =
-      !this.isProviderAllowed('claude', claudeTarget) ||
+      !this.canFetchProvider('claude', signal, claudeTarget) ||
       (!options?.force && this.shouldSkipAutomatedClaudeFetch(previousState.claude))
 
     const [claudeResult, codexResult, geminiResult, opencodeGoResult, kimiResult, miniMaxResult] =
@@ -241,8 +241,10 @@ export abstract class RateLimitServiceFullCyclePreparation extends RateLimitServ
               codexHomePath,
               signal
             })),
-        this.fetchAllowedProvider('gemini', () => fetchGeminiRateLimits(geminiCliOAuthEnabled)),
-        this.fetchAllowedProvider('opencode-go', () =>
+        this.fetchAllowedProvider('gemini', signal, () =>
+          fetchGeminiRateLimits(geminiCliOAuthEnabled)
+        ),
+        this.fetchAllowedProvider('opencode-go', signal, () =>
           fetchOpenCodeGoUsage({
             allowAmbientCredentials: this.isAutomaticDiscoveryEnabled(),
             settingsApiKey: openCodeGoApiKey,
@@ -266,7 +268,7 @@ export abstract class RateLimitServiceFullCyclePreparation extends RateLimitServ
           })
         ),
         this.fetchKimiWithResolvedHome(signal),
-        this.fetchAllowedProvider('minimax', () =>
+        this.fetchAllowedProvider('minimax', signal, () =>
           miniMaxConfigResult.error
             ? Promise.resolve(this.getMiniMaxCredentialError(miniMaxConfigResult.error))
             : fetchMiniMaxRateLimits({

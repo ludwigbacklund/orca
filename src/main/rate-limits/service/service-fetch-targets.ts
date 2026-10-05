@@ -17,6 +17,7 @@ import {
 import type { CodexRateLimitResetOutcome } from '../../../shared/rate-limit-types'
 import { ApiKeyFileUnreadableError } from '../../credentials/api-key-file-unreadable-error'
 import { discoveryDisabledSnapshot } from './account-discovery-policy'
+import type { ClaudeAccountSelectionTarget } from '../../claude-accounts/runtime-selection'
 
 const CODEX_RESET_REFRESH_RETRIES = 3
 const CODEX_RESET_REFRESH_DELAY_MS = 250
@@ -45,6 +46,12 @@ function codexResetUsageVisible(
 }
 
 export abstract class RateLimitServiceFetchTargets extends RateLimitServiceResultPolicy {
+  protected resolveClaudeAuthForUsage(target: ClaudeAccountSelectionTarget, signal: AbortSignal) {
+    return this.canFetchProvider('claude', signal, target)
+      ? this.claudeAuthPreparationResolver?.(target)
+      : undefined
+  }
+
   protected resolveCodexHome(target?: CodexAccountSelectionTarget): {
     skip: boolean
     homePath: string | null
@@ -64,14 +71,14 @@ export abstract class RateLimitServiceFetchTargets extends RateLimitServiceResul
   // Why: resolving a WSL home probes wsl.exe, so it must not run before the other
   // providers' fetches are started; chaining keeps the no-resolver path immediate.
   protected fetchKimiWithResolvedHome(signal: AbortSignal): Promise<ProviderRateLimits> {
-    if (signal.aborted || !this.isProviderAllowed('kimi')) {
+    if (!this.canFetchProvider('kimi', signal)) {
       return Promise.resolve(discoveryDisabledSnapshot('kimi'))
     }
     const pendingHome = this.kimiHomeResolver?.()
     return pendingHome
       ? pendingHome.then((home) => {
           // Why: opting out while the WSL home resolves must not start a credential read.
-          if (signal.aborted || !this.isProviderAllowed('kimi')) {
+          if (!this.canFetchProvider('kimi', signal)) {
             return discoveryDisabledSnapshot('kimi')
           }
           return fetchKimiRateLimits({ home })

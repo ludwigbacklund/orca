@@ -22,10 +22,7 @@ import {
   type NetworkProxySettings,
   DEFAULT_POLL_MS
 } from './service-types'
-import {
-  discoveryDisabledSnapshot,
-  type AccountDiscoveryPolicyResolver
-} from './account-discovery-policy'
+import type { AccountDiscoveryPolicyResolver } from './account-discovery-policy'
 import type { ClaudeAccountSelectionTarget } from '../../claude-accounts/runtime-selection'
 
 export abstract class RateLimitServiceState {
@@ -167,21 +164,6 @@ export abstract class RateLimitServiceState {
     const effectiveTarget =
       target ?? (provider === 'claude' ? this.claudeFetchTarget : this.codexFetchTarget)
     return !policy || policy.automaticallyDetect || policy.isConnected(provider, effectiveTarget)
-  }
-
-  protected fetchAllowedProvider(
-    provider: ProviderRateLimits['provider'],
-    fetch: () => Promise<ProviderRateLimits>
-  ): Promise<ProviderRateLimits> {
-    return this.isProviderAllowed(provider)
-      ? fetch()
-      : Promise.resolve(discoveryDisabledSnapshot(provider))
-  }
-
-  protected resolveClaudeAuthForUsage(target: ClaudeAccountSelectionTarget) {
-    return this.isProviderAllowed('claude', target)
-      ? this.claudeAuthPreparationResolver?.(target)
-      : undefined
   }
 
   onStateChange(listener: (state: RateLimitState) => void): () => void {
